@@ -25,9 +25,16 @@ fn layout(window: &gtk::ApplicationWindow) {
     tool_menu.set_hexpand(true);
     tool_menu.set_vexpand(false);
 
-    let plot_canvas = gtk::Button::with_label("Canvas");
+    let plot_canvas = gtk::DrawingArea::new();
     plot_canvas.set_vexpand(true);
     plot_canvas.set_hexpand(true);
+    plot_canvas.set_draw_func(|_, cairo, width, height|{
+        
+        cairo.set_source_rgb(1.0, 0.0, 0.0);
+        cairo.set_line_width(10.0);
+        cairo.rectangle(width as f64 / 4.0, height as f64 / 4.0, width as f64 / 2.0, height as f64 / 2.0);
+        cairo.stroke().unwrap();
+    });
 
     draw_space.attach(&tool_menu, 0, 0, 1, 1);
     draw_space.attach(&plot_canvas, 0, 1, 1, 1);
