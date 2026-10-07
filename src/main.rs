@@ -1,5 +1,9 @@
 use gtk::prelude::*;
 
+fn equation(x: f64) -> f64 {
+    x * x
+}
+
 fn layout(window: &gtk::ApplicationWindow) {
     let grid = gtk::Grid::new();
     
@@ -31,8 +35,24 @@ fn layout(window: &gtk::ApplicationWindow) {
     plot_canvas.set_draw_func(|_, cairo, width, height|{
         
         cairo.set_source_rgb(1.0, 0.0, 0.0);
-        cairo.set_line_width(10.0);
-        cairo.rectangle(width as f64 / 4.0, height as f64 / 4.0, width as f64 / 2.0, height as f64 / 2.0);
+        cairo.set_line_width(5.0);
+
+        let dx = width as f64 / 4.0;
+        let dy = width as f64 / 4.0;
+        let w  = width as f64 / 2.0;
+        let h  = height as f64 / 2.0;
+
+        let mut x = -1.0;
+        for _ in 0 .. 2000 {
+            let y = equation(x);
+
+            let abs_x = dx + w / 2.0 + x * h;
+            let abs_y = dy + h / 2.0 - y * h;
+
+            cairo.line_to(abs_x, abs_y);
+
+            x += 0.001;
+        }
         cairo.stroke().unwrap();
     });
 
