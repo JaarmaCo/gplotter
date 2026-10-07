@@ -91,7 +91,7 @@ fn layout(window: &gtk::ApplicationWindow) {
         cairo.set_source_rgb(1.0, 1.0, 1.0);
         cairo.paint().unwrap();
 
-        draw_grid(&cairo, w, h, w / 10.0, w / 10.0);
+        draw_grid(&cairo, w, h, w / 20.0, w / 20.0);
         draw_axes(&cairo, w, h);
 
         cairo.set_source_rgb(1.0, 0.0, 0.0);
