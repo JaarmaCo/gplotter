@@ -1,4 +1,5 @@
 use gtk::prelude::*;
+use gtk::gdk;
 
 macro_rules! cfor {
     ($init:stmt; $cond:expr; $step:expr; $body:block) => {{
@@ -55,6 +56,18 @@ fn draw_axes(cairo: &gtk::cairo::Context, w: f64, h: f64) {
     cairo.stroke().unwrap();
 }
 
+fn equation_box() -> gtk::Text {
+    let buffer = gtk::EntryBuffer::new(Some(""));
+    let view = gtk::Text::with_buffer(&buffer);
+
+    view.set_editable(true);
+    view.set_hexpand(true);
+    view.set_placeholder_text(Some("Enter equation..."));
+    view.add_css_class("ebox");
+
+    return view;
+}
+
 fn layout(window: &gtk::ApplicationWindow) {
     let grid = gtk::Grid::new();
     
@@ -62,15 +75,12 @@ fn layout(window: &gtk::ApplicationWindow) {
     equation_view.set_hexpand(true);
     equation_view.set_vexpand(true);
 
-    for i in 0..10 {
-        let cont: String = format!("Button {}", i);
-        let button = gtk::Button::with_label(&cont);
-        let row = gtk::ListBoxRow::new();
-   
-        row.set_child(Some(&button));
-        equation_view.append(&row);
-    }
-    
+    let item = equation_box();
+    let row = gtk::ListBoxRow::new();
+
+    row.set_child(Some(&item));
+    equation_view.append(&row);
+
     let draw_space = gtk::Grid::new();
 
     draw_space.set_hexpand(true);
@@ -129,6 +139,13 @@ fn main() {
         window.set_default_size(1024, 512);
 
         layout(&window);
+ 
+        let css_provider = gtk::CssProvider::new();
+        css_provider.load_from_data(include_str!("../styles/main.css"));
+        let prio = gtk::STYLE_PROVIDER_PRIORITY_USER;
+        let display = gdk::Display::default().expect("Failed to find the default display.");
+
+        gtk::style_context_add_provider_for_display(&display, &css_provider, prio);
 
         window.present();
     });
