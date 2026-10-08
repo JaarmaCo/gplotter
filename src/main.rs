@@ -56,6 +56,89 @@ fn draw_axes(cairo: &gtk::cairo::Context, w: f64, h: f64) {
     cairo.stroke().unwrap();
 }
 
+fn draw_scalars(cairo: &gtk::cairo::Context, dx: f64, dy: f64, w: f64, h: f64, scale_x: f64, scale_y: f64) {
+
+    let pad_x = 5.0;
+    let pad_y = 5.0;
+
+    cairo.set_font_size(10.0);
+    cairo.set_source_rgb(0.0, 0.0, 0.0);
+
+    cairo.move_to(w / 2.0 + pad_x, h / 2.0 - pad_y);
+    cairo.show_text("0").unwrap();
+
+    let mut x = w / 2.0 + dx;
+    let mut value_x = scale_x;
+    while x <= w {
+
+        let label = format!("{:.2}", value_x);
+
+        cairo.move_to(x + pad_x, h / 2.0 - pad_y);
+        cairo.show_text(&label).unwrap();
+
+        value_x += scale_x;
+        x += dx;
+    }
+
+    x = w / 2.0 - dx;
+    value_x = -scale_x;
+    while x >= 0.0 {
+
+        let label = format!("{:.2}", value_x);
+
+        cairo.move_to(x + pad_x, h / 2.0 - pad_y);
+        cairo.show_text(&label).unwrap();
+
+        value_x -= scale_x;
+        x -= dx;
+    }
+
+    let mut y = h / 2.0 - dy;
+    let mut value_y = scale_y;
+    while y >= 0.0 {
+
+        let label = format!("{:.2}", value_y);
+
+        cairo.move_to(w / 2.0 + pad_x, y - pad_y);
+        cairo.show_text(&label).unwrap();
+
+        value_y += scale_y;
+        y -= dy;
+    }
+
+    y = h / 2.0 + dy;
+    value_y = -scale_y;
+    while y <= h {
+
+        let label = format!("{:.2}", value_y);
+
+        cairo.move_to(w / 2.0 + pad_x, y - pad_y);
+        cairo.show_text(&label).unwrap();
+
+        value_y -= scale_y;
+        y += dy;
+    }
+}
+
+fn draw_equation(cairo: &gtk::cairo::Context, w: f64, h: f64) {
+    cairo.set_source_rgb(1.0, 0.0, 0.0);
+    cairo.set_line_width(5.0);
+
+    let mut x = -1.0;
+    cairo.move_to(w / 2.0 + x * h, h / 2.0 - equation(x) * h);
+    for _ in 0 .. 2000 {
+        let y = equation(x);
+
+        let abs_x = w / 2.0 + x * h;
+        let abs_y = h / 2.0 - y * h;
+
+        cairo.line_to(abs_x, abs_y);
+
+        x += 0.001;
+    }
+    cairo.stroke().unwrap();
+}
+
 fn equation_box() -> gtk::Text {
     let buffer = gtk::EntryBuffer::new(Some(""));
     let view = gtk::Text::with_buffer(&buffer);
@@ -103,22 +186,8 @@ fn layout(window: &gtk::ApplicationWindow) {
 
         draw_grid(&cairo, w, h, w / 20.0, w / 20.0);
         draw_axes(&cairo, w, h);
-
-        cairo.set_source_rgb(1.0, 0.0, 0.0);
-        cairo.set_line_width(5.0);
-
-        let mut x = -1.0;
-        for _ in 0 .. 2000 {
-            let y = equation(x);
-
-            let abs_x = w / 2.0 + x * h;
-            let abs_y = h / 2.0 - y * h;
-
-            cairo.line_to(abs_x, abs_y);
-
-            x += 0.001;
-        }
-        cairo.stroke().unwrap();
+        draw_scalars(&cairo, w / 20.0, w / 20.0, w, h, 1.0 / 20.0, 1.0 / 20.0);
+        draw_equation(&cairo, w, h);
     });
 
     draw_space.attach(&tool_menu, 0, 0, 1, 1);
