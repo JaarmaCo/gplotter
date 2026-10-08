@@ -1,5 +1,11 @@
+use std::char;
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::vec::Vec;
+
 use gtk::prelude::*;
 use gtk::gdk;
+use libm::*;
 
 macro_rules! cfor {
     ($init:stmt; $cond:expr; $step:expr; $body:block) => {{
@@ -11,8 +17,230 @@ macro_rules! cfor {
     }};
 }
 
-fn equation(x: f64) -> f64 {
-    x * x
+#[derive(Debug, Clone)]
+enum Equation {
+    Dep,
+    Add { lhs: Rc<Equation>, rhs: Rc<Equation> },
+    Sub { lhs: Rc<Equation>, rhs: Rc<Equation> },
+    Mul { lhs: Rc<Equation>, rhs: Rc<Equation> },
+    Div { lhs: Rc<Equation>, rhs: Rc<Equation> },
+    Exp { lhs: Rc<Equation>, rhs: Rc<Equation> },
+    Func { name: String, args: Vec<Rc<Equation>> },
+    Const { value: f64 },
+}
+
+#[derive(Debug, Clone)]
+enum Token {
+    X,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Hat,
+    OParen,
+    CParen,
+    Comma,
+    FName(String),
+    Literal(f64),
+}
+
+fn lookup_fn(_name: &String) -> Option<&dyn Fn(&Vec<f64>) -> f64> {
+    return None;
+}
+
+fn eval(x: f64, eq: &Equation) -> Option<f64> {
+    match eq {
+        Equation::Dep => Some(x),
+        Equation::Add{ lhs, rhs } => Some(eval(x, &lhs)? + eval(x, &rhs)?),
+        Equation::Sub{ lhs, rhs } => Some(eval(x, &lhs)? - eval(x, &rhs)?),
+        Equation::Mul{ lhs, rhs } => Some(eval(x, &lhs)? * eval(x, &rhs)?),
+        Equation::Div{ lhs, rhs } => Some(eval(x, &lhs)? / eval(x, &rhs)?),
+        Equation::Exp{ lhs, rhs } => Some(pow(eval(x, &lhs)?, eval(x, &rhs)?)),
+        Equation::Func{ name, args } => {
+            let mut arg_vec = Vec::new();
+            let func = lookup_fn(&name)?;
+            for e in args {
+                arg_vec.push(eval(x, &e)?);
+            }
+            Some(func(&arg_vec))
+        },
+        Equation::Const { value } => Some(*value),
+    }
+}
+
+fn lex_eq(chars_in: &str) -> Option<Vec<Token>> { 
+
+    let mut res = Vec::new();
+    let mut chars = chars_in;
+    while !chars.is_empty() {
+
+        chars = chars.trim_start();
+
+        if let Some(rem) = chars.strip_prefix("+") {
+            res.push(Token::Plus);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix("-") {
+            res.push(Token::Minus);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix("*") {
+            res.push(Token::Star);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix("/") {
+            res.push(Token::Slash);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix("^") {
+            res.push(Token::Hat);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix("(") {
+            res.push(Token::OParen);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix(")") {
+            res.push(Token::CParen);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix("x") {
+            res.push(Token::X);
+            chars = rem;
+        } else if let Some(rem) = chars.strip_prefix(",") {
+            res.push(Token::Comma);
+            chars = rem;
+        } else if let Some((fname, rem)) = chars.split_once(char::is_alphabetic) {
+            res.push(Token::FName(String::from(fname)));
+            chars = rem;
+        } else if let Some((cvalue, rem)) = chars.split_once(
+            |c| char::is_digit(c, 10) || c == '.' || c == '+' || c == '-' || c == 'e') {
+            if let Ok(value) = cvalue.parse::<f64>() {
+                res.push(Token::Literal(value));
+                chars = rem;
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    Some(res)
+}
+
+fn parse_eq_prim(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+    if tokens.is_empty() {
+        None
+    } else {
+        match tokens[0].clone() {
+            Token::X =>
+                Some((&tokens[1..], Equation::Dep)),
+            Token::Literal(value) =>
+                Some((&tokens[1..], Equation::Const{ value: value })),
+            Token::OParen => {
+                let (rest, eq) = parse_eq(&tokens[1..])?;
+                if !rest.is_empty() && let Token::CParen = rest[0] {
+                    Some((&rest[1..], eq))
+                } else {
+                    None
+                }
+            },
+            Token::FName(fname) => {
+                if tokens.len() >= 3 && let Token::OParen = tokens[1] {
+                    let mut rest = &tokens[2..];
+                    let mut args = Vec::new();
+                    loop {
+                        if rest.is_empty() {
+                            break;
+                        } else if let Token::CParen = rest[0] {
+                            rest = &rest[1..]; 
+                            break;
+                        }
+
+                        let (next_rest, parsed_arg) = parse_eq(rest)?;
+                        if next_rest.is_empty() {
+                            return None;
+                        }
+
+                        if let Token::Comma = next_rest[0] {
+                            args.push(Rc::new(parsed_arg));
+                            rest = &next_rest[1..];
+                        } else if let Token::CParen = next_rest[0] {
+                            rest = &next_rest[1..];
+                            break;
+                        } else {
+                            return None;
+                        }
+                    }
+                    Some((rest, Equation::Func{ name: fname, args: args }))
+                } else {
+                    None
+                }
+            }
+            _ => None
+        }
+    }
+}
+
+fn parse_eq_2(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+    let (rest, lhs) = parse_eq_prim(tokens)?;
+    if rest.is_empty() {
+        Some((rest, lhs))
+    } else {
+        match rest[0] {
+            Token::Hat => {
+                let (rest, rhs) = parse_eq_2(&tokens[1..])?;
+                Some((rest, Equation::Exp{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+            },
+            _ => Some((rest, lhs))
+        }
+    }
+}
+
+fn parse_eq_1(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+    let (rest, lhs) = parse_eq_2(tokens)?;
+    if rest.is_empty() {
+        Some((rest, lhs))
+    } else {
+        match rest[0] {
+            Token::Star => {
+                let (rest, rhs) = parse_eq_1(&rest[1..])?;
+                Some((rest, Equation::Mul{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+            },
+            Token::Slash => {
+                let (rest, rhs) = parse_eq_1(&rest[1..])?;
+                Some((rest, Equation::Div{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+            },
+            _ => Some((rest, lhs))
+        }
+    }
+}
+
+fn parse_eq(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+    let (rest, lhs) = parse_eq_1(tokens)?;
+    if rest.is_empty() {
+        Some((rest, lhs))
+    } else {
+        match rest[0] {
+            Token::Plus => {
+                let (rest, rhs) = parse_eq(&rest[1..])?;
+                Some((rest, Equation::Add{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+            }
+            Token::Minus => {
+                let (rest, rhs) = parse_eq(&rest[1..])?;
+                Some((rest, Equation::Sub{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+            }
+            _ =>
+                Some((rest, lhs))
+        }
+    }
+}
+
+fn read_eq(src: &str) -> Option<Equation> {
+    if let Some(tokens) = lex_eq(src) {
+        if let Some((_, eq)) = parse_eq(&tokens) {
+            Some(eq)
+        } else {
+            println!("Parser error in equation.");
+            None
+        }
+    } else {
+        println!("Lexer error in equation.");
+        None
+    }
 }
 
 fn draw_grid(cairo: &gtk::cairo::Context, w: f64, h: f64, dx: f64, dy: f64) {
@@ -41,6 +269,11 @@ fn draw_grid(cairo: &gtk::cairo::Context, w: f64, h: f64, dx: f64, dy: f64) {
     });
 
     cairo.stroke().unwrap();
+}
+
+fn draw_background(cairo: &gtk::cairo::Context) {
+    cairo.set_source_rgb(1.0, 1.0, 1.0);
+    cairo.paint().unwrap();
 }
 
 fn draw_axes(cairo: &gtk::cairo::Context, w: f64, h: f64) {
@@ -120,7 +353,7 @@ fn draw_scalars(cairo: &gtk::cairo::Context, dx: f64, dy: f64, w: f64, h: f64, s
     }
 }
 
-fn draw_equation(cairo: &gtk::cairo::Context, w: f64, h: f64) {
+fn draw_equation(cairo: &gtk::cairo::Context, w: f64, h: f64, equation: Box<dyn Fn(f64) -> f64>) {
     cairo.set_source_rgb(1.0, 0.0, 0.0);
     cairo.set_line_width(5.0);
 
@@ -139,7 +372,7 @@ fn draw_equation(cairo: &gtk::cairo::Context, w: f64, h: f64) {
     cairo.stroke().unwrap();
 }
 
-fn equation_box() -> gtk::Text {
+fn equation_box<T: IsA<gtk::Widget>>(eq_list: Rc<RefCell<Vec<Equation>>>, hook: &T) -> gtk::Text {
     let buffer = gtk::EntryBuffer::new(Some(""));
     let view = gtk::Text::with_buffer(&buffer);
 
@@ -148,17 +381,35 @@ fn equation_box() -> gtk::Text {
     view.set_placeholder_text(Some("Enter equation..."));
     view.add_css_class("ebox");
 
-    return view;
+    eq_list.borrow_mut().push(Equation::Const { value: 0.0 });
+    
+    let index = eq_list.borrow().len() - 1;
+    let local_hook = hook.clone();
+    view.connect_changed(move |view|
+        {
+            println!("Text changed!");
+            if let Some(eq) = read_eq(&view.text()) {
+                eq_list.borrow_mut()[index] = eq;
+                local_hook.queue_draw();
+            }
+        });    
+    view
 }
 
 fn layout(window: &gtk::ApplicationWindow) {
     let grid = gtk::Grid::new();
     
+    let equations = Rc::new(RefCell::new(Vec::new()));
+
     let equation_view = gtk::ListBox::new();
     equation_view.set_hexpand(true);
     equation_view.set_vexpand(true);
 
-    let item = equation_box();
+    let plot_canvas = gtk::DrawingArea::new();
+    plot_canvas.set_vexpand(true);
+    plot_canvas.set_hexpand(true);
+
+    let item = equation_box(equations.clone(), &plot_canvas);
     let row = gtk::ListBoxRow::new();
 
     row.set_child(Some(&item));
@@ -173,21 +424,32 @@ fn layout(window: &gtk::ApplicationWindow) {
     tool_menu.set_hexpand(true);
     tool_menu.set_vexpand(false);
 
-    let plot_canvas = gtk::DrawingArea::new();
-    plot_canvas.set_vexpand(true);
-    plot_canvas.set_hexpand(true);
-    plot_canvas.set_draw_func(|_, cairo, width, height|{
-    
+    let eq_list = equations.clone();
+    plot_canvas.set_draw_func(move |_, cairo, width, height|{
+
+        println!("Draw.");
+
         let w  = width as f64;
         let h  = height as f64;
 
-        cairo.set_source_rgb(1.0, 1.0, 1.0);
-        cairo.paint().unwrap();
-
+        draw_background(&cairo);
         draw_grid(&cairo, w, h, w / 20.0, w / 20.0);
         draw_axes(&cairo, w, h);
         draw_scalars(&cairo, w / 20.0, w / 20.0, w, h, 1.0 / 20.0, 1.0 / 20.0);
-        draw_equation(&cairo, w, h);
+        
+        let eq_ref = eq_list.borrow();
+        let iter = eq_ref.iter();
+        for eq in iter {
+            let eq_cp = eq.clone();
+            draw_equation(&cairo, w, h,
+                Box::new(move |x|
+                    if let Some(y) = eval(x, &eq_cp) {
+                        y
+                    } else {
+                        println!("Eval error.");
+                        0.0
+                    }));
+        }
     });
 
     draw_space.attach(&tool_menu, 0, 0, 1, 1);

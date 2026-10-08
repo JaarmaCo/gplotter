@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 gtk = { version = "0.10", package = "gtk4" }
+libm = "0.2.16"
