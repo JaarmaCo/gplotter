@@ -1,4 +1,3 @@
-use std::char;
 use std::fmt::Display;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -111,16 +110,56 @@ fn eval(x: f64, eq: &Equation) -> Result<f64, String> {
     }
 }
 
-fn grab_chars<'a, F: Fn(char) -> bool>(s: &'a str, pred: &F) -> Option<(&'a str, &'a str)> {
-    let mut it = s.chars();
+fn lex_number<'a>(s: &'a str) -> Option<(&'a str, &'a str)> {
     let mut i = 0;
-    while let Some(c) = it.next() {
-        if !pred(c) {
-            break;
-        }
+    let mut it = s.chars().peekable();
+
+    while let Some(ch) = it.peek() && ch.is_ascii_digit() {
         i += 1;
+        it.next();
     }
-    return if i == 0 {
+
+    if let Some(ch) = it.peek() && *ch == '.' {
+        i += 1;
+        it.next();
+        while let Some(ch) = it.peek() && ch.is_ascii_digit() {
+            i += 1;
+            it.next();
+        }
+
+        if let Some(ch) = it.peek() && (*ch == 'e' || *ch == 'E') {
+            i += 1;
+            it.next();
+            if let Some(ch) = it.peek() && (*ch == '+' || *ch == '-' || ch.is_ascii_digit()) {
+                i += 1;
+                it.next();
+                while let Some(ch) = it.peek() && ch.is_ascii_digit() {
+                    i += 1;
+                    it.next();
+                }
+            }
+        }
+    }
+
+    if i == 0 {
+        None
+    } else {
+        Some((&s[0..i], &s[i..]))
+    }
+}
+
+fn lex_ident<'a>(s: &'a str) -> Option<(&'a str, &'a str)> {
+
+    let mut i = 0;
+    let mut it = s.chars();
+    if let Some(c) = it.next() && c.is_alphabetic() {
+        i += 1;
+        while let Some(c) = it.next() && (c.is_alphanumeric() || c == '_') {
+            i += 1;
+        }
+    }
+    
+    if i == 0 {
         None
     } else {
         Some((&s[0..i], &s[i..]))
@@ -162,11 +201,10 @@ fn lex_eq(chars_in: &str) -> Result<Vec<Token>, String> {
         } else if let Some(rem) = chars.strip_prefix(",") {
             res.push(Token::Comma);
             chars = rem;
-        } else if let Some((fname, rem)) = grab_chars(chars, &char::is_alphabetic) {
+        } else if let Some((fname, rem)) = lex_ident(chars) {
             res.push(Token::FName(String::from(fname)));
             chars = rem;
-        } else if let Some((cvalue, rem)) = grab_chars(chars,
-            &|c| char::is_digit(c, 10) || c == '.' || c == '+' || c == '-' || c == 'e') {
+        } else if let Some((cvalue, rem)) = lex_number(chars) {
             if let Ok(value) = cvalue.parse::<f64>() {
                 res.push(Token::Literal(value));
                 chars = rem;
