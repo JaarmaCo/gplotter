@@ -72,6 +72,43 @@ enum Token {
     Literal(f64),
 }
 
+struct ParamState<T> {
+    value: T,
+    sensitivity_list: Vec<Box<dyn Fn()>>
+}
+
+#[derive(Clone)]
+struct Param<T: Clone> {
+    state: Rc<RefCell<ParamState<T>>>
+}
+
+impl <T: Clone> Param<T> {
+
+    fn new(value: T) -> Param<T> {
+        Param{
+            state: Rc::new(RefCell::new(ParamState{
+                value: value,
+                sensitivity_list: Vec::new()
+            }))
+        }
+    }
+
+    fn set_value(&self, new_value: T) {
+        self.state.borrow_mut().value = new_value;
+        for notify in self.state.borrow().sensitivity_list.iter() {
+            notify();
+        }
+    }
+
+    fn get_value(&self) -> T {
+        return self.state.borrow().value.clone();
+    }
+
+    fn listen<F: Fn() + 'static>(&self, notify: F) {
+        self.state.borrow_mut().sensitivity_list.push(Box::new(notify));
+    }
+}
+
 fn lookup_fn(name: &String) -> Option<Box<dyn Fn(&Vec<f64>) -> f64>> {
     return match name.as_str() {
         "pi" => Some(Box::new(|_| 3.141592653589793238462643383279)),
@@ -443,17 +480,17 @@ fn draw_scalars(cairo: &gtk::cairo::Context, dx: f64, dy: f64, w: f64, h: f64, s
     }
 }
 
-fn draw_equation<F: Fn(f64) -> f64>(cairo: &gtk::cairo::Context, w: f64, h: f64, equation: &F) {
+fn draw_equation<F: Fn(f64) -> f64>(cairo: &gtk::cairo::Context, w: f64, h: f64, axis_scale_x: f64, axis_scale_y: f64, equation: &F) {
     cairo.set_source_rgb(1.0, 0.0, 0.0);
     cairo.set_line_width(5.0);
 
     let mut x = -1.0;
     cairo.move_to(w / 2.0 + x * h, h / 2.0 - equation(x) * h);
     for _ in 0 .. 2000 {
-        let y = equation(x);
+        let y = equation(x * axis_scale_x);
 
         let abs_x = w / 2.0 + x * h;
-        let abs_y = h / 2.0 - y * h;
+        let abs_y = h / 2.0 - y / axis_scale_y * h;
 
         cairo.line_to(abs_x, abs_y);
 
@@ -491,8 +528,51 @@ fn equation_box<T: IsA<gtk::Widget>>(eq_list: Rc<RefCell<Vec<Equation>>>, hook: 
     view
 }
 
+fn number_box(label: Option<&str>, value_ref: Param<f64>) -> gtk::Widget {
+    let text_box = gtk::Entry::new();
+    text_box.set_text(format!("{:.2}", value_ref.get_value()).as_str());
+    
+    text_box.connect_changed(move |entry| {
+        let text = entry.text();
+
+        if let Ok(value) = text.parse::<f64>() {
+            value_ref.set_value(value);
+            entry.remove_css_class("input-error");
+        } else {
+            entry.add_css_class("input-error");
+        }
+    });
+    
+    if let Some(label_text) = label {
+        let layout_widget = gtk::FlowBox::new();
+        layout_widget.set_selection_mode(gtk::SelectionMode::None);
+        layout_widget.set_halign(gtk::Align::Center);
+
+        let label_widget = gtk::Label::new(Some(label_text));
+        label_widget.add_css_class("number-box-label");
+        label_widget.set_focusable(false);
+        label_widget.set_can_target(false);
+
+        layout_widget.insert(&text_box, -1);
+        layout_widget.insert(&label_widget, -1);
+
+        layout_widget.add_css_class("number-box");
+        layout_widget.into()
+    } else {
+        text_box.add_css_class("number-box");
+        text_box.into()
+    }
+}
+
 fn layout(window: &gtk::ApplicationWindow) {
+    
+    let axis_scale_x = Param::new(1.0);
+    let axis_scale_y = Param::new(1.0);
+
+    let base_overlay = gtk::Overlay::new();
+
     let grid = gtk::Grid::new();
+    base_overlay.set_child(Some(&grid));
     
     let equations = Rc::new(RefCell::new(Vec::new()));
 
@@ -504,6 +584,12 @@ fn layout(window: &gtk::ApplicationWindow) {
     plot_canvas.set_vexpand(true);
     plot_canvas.set_hexpand(true);
 
+    {
+        let cx = plot_canvas.clone();
+        let cy = plot_canvas.clone();
+        axis_scale_x.listen(move || cx.queue_draw());
+        axis_scale_y.listen(move || cy.queue_draw());
+    }
     let item = equation_box(equations.clone(), &plot_canvas);
     let row = gtk::ListBoxRow::new();
 
@@ -515,9 +601,56 @@ fn layout(window: &gtk::ApplicationWindow) {
     draw_space.set_hexpand(true);
     draw_space.set_vexpand(true);
 
-    let tool_menu = gtk::Button::with_label("Tool menu");
+    let tool_menu = gtk::FlowBox::new();
     tool_menu.set_hexpand(true);
     tool_menu.set_vexpand(false);
+    tool_menu.set_direction(gtk::TextDirection::Rtl);
+
+    let settings_menu_frame = gtk::Frame::new(None);
+    let settings_menu = gtk::ListBox::new();
+    settings_menu_frame.set_margin_top(60);
+    settings_menu_frame.set_margin_bottom(60);
+    settings_menu_frame.set_margin_start(240);
+    settings_menu_frame.set_margin_end(240);
+    settings_menu_frame.set_visible(false);
+    settings_menu_frame.set_child(Some(&settings_menu));
+    base_overlay.add_overlay(&settings_menu_frame);
+
+    let settings_menu_header_bar = gtk::HeaderBar::new();
+    {
+        let settings_menu_title = gtk::Label::new(Some("Settings Menu"));
+        settings_menu_title.add_css_class("settings-menu-title");
+        settings_menu_header_bar.set_title_widget(Some(&settings_menu_title));
+        settings_menu_header_bar.set_show_title_buttons(false);
+        
+        let settings_menu_close_button = gtk::Button::with_label("x");
+        settings_menu_close_button.add_css_class("close-button");
+
+        let settings_menu_clone = settings_menu_frame.clone();
+        settings_menu_close_button.connect_clicked(move |_| {
+            settings_menu_clone.set_visible(false);
+        });
+        
+        settings_menu_header_bar.pack_end(&settings_menu_close_button);
+    }
+    settings_menu.insert(&settings_menu_header_bar, -1);
+    settings_menu.insert(&number_box(Some("X Scale"), axis_scale_x.clone()), -1);
+    settings_menu.insert(&number_box(Some("Y Scale"), axis_scale_y.clone()), -1);
+
+    // Settings icon was downloaded from https://www.svgrepo.com/svg/529867/settings, the color has
+    // been modified...
+    let settings_menu_button = gtk::Button::new();
+    let settings_menu_icon = gtk::Image::from_file("resources/settings-icon.svg"); 
+    settings_menu_button.set_child(Some(&settings_menu_icon));
+    settings_menu_button.set_size_request(32, 32);
+    settings_menu_button.set_valign(gtk::Align::Center);
+    settings_menu_button.set_halign(gtk::Align::Center);
+
+    let settings_menu_clone = settings_menu_frame.clone();
+    settings_menu_button.connect_clicked(move |_| {
+        settings_menu_clone.set_visible(true); 
+    });
+    tool_menu.insert(&settings_menu_button, -1);
 
     let eq_list = equations.clone();
     plot_canvas.set_draw_func(move |_, cairo, width, height|{
@@ -528,8 +661,8 @@ fn layout(window: &gtk::ApplicationWindow) {
         draw_background(&cairo);
         draw_grid(&cairo, w, h, w / 20.0, w / 20.0);
         draw_axes(&cairo, w, h);
-        draw_scalars(&cairo, w / 20.0, w / 20.0, w, h, 1.0 / 20.0, 1.0 / 20.0);
-        
+        draw_scalars(&cairo, w / 20.0, w / 20.0, w, h, axis_scale_x.get_value() / 20.0, axis_scale_y.get_value() / 20.0);
+       
         let eq_ref = eq_list.borrow();
         let iter = eq_ref.iter();
         for eq in iter {
@@ -539,6 +672,8 @@ fn layout(window: &gtk::ApplicationWindow) {
                 break;
             }
             draw_equation(&cairo, w, h,
+                axis_scale_x.get_value(),
+                axis_scale_y.get_value(),
                 &move |x| {
                     match eval(x, &eq_cp) {
                         Ok(y) => y,
@@ -557,7 +692,7 @@ fn layout(window: &gtk::ApplicationWindow) {
     grid.attach(&equation_view, 0, 0, 1, 1); 
     grid.attach(&draw_space, 1, 0, 3, 1);
 
-    window.set_child(Some(&grid));
+    window.set_child(Some(&base_overlay));
 }
 
 fn main() {

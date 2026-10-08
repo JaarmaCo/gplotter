@@ -1,3 +1,17 @@
 .ebox {
     font: 16px "SourceCodeVF";
 }
+
+.settings-menu-title {
+    font: 18px "SourceCodeVF";
+}
+
+.close-button {
+
+}
+
+.input-error {
+    border: none;
+    outline: 2px solid red;
+}
+
