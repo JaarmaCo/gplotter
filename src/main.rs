@@ -1,4 +1,5 @@
 use std::char;
+use std::fmt::Display;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::vec::Vec;
@@ -29,6 +30,34 @@ enum Equation {
     Const { value: f64 },
 }
 
+impl Display for Equation {
+    fn fmt(&self, ctx: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Equation::Dep => ctx.write_str("x"),
+            Equation::Add { lhs, rhs } => write!(ctx, "(+ {} {})", *lhs, *rhs),
+            Equation::Sub { lhs, rhs } => write!(ctx, "(- {} {})", *lhs, *rhs),
+            Equation::Mul { lhs, rhs } => write!(ctx, "(* {} {})", *lhs, *rhs),
+            Equation::Div { lhs, rhs } => write!(ctx, "(/ {} {})", *lhs, *rhs),
+            Equation::Exp { lhs, rhs } => write!(ctx, "(^ {} {})", *lhs, *rhs),
+            Equation::Func { name, args } => {
+                write!(ctx, "({} ", name)?; 
+                if args.len() == 0 {
+                    ctx.write_str("[])")
+                } else if args.len() == 0 {
+                    write!(ctx, "[ {} ])", *args[0])
+                } else {
+                    write!(ctx, "[ {}", *args[0])?;
+                    for arg in &args.as_slice()[1..] {
+                        write!(ctx, ", {}", *arg)?;
+                    }
+                    ctx.write_str(" ])")
+                }
+            },
+            Equation::Const { value } => write!(ctx, "{}", value),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Token {
     X,
@@ -44,31 +73,61 @@ enum Token {
     Literal(f64),
 }
 
-fn lookup_fn(_name: &String) -> Option<&dyn Fn(&Vec<f64>) -> f64> {
-    return None;
-}
-
-fn eval(x: f64, eq: &Equation) -> Option<f64> {
-    match eq {
-        Equation::Dep => Some(x),
-        Equation::Add{ lhs, rhs } => Some(eval(x, &lhs)? + eval(x, &rhs)?),
-        Equation::Sub{ lhs, rhs } => Some(eval(x, &lhs)? - eval(x, &rhs)?),
-        Equation::Mul{ lhs, rhs } => Some(eval(x, &lhs)? * eval(x, &rhs)?),
-        Equation::Div{ lhs, rhs } => Some(eval(x, &lhs)? / eval(x, &rhs)?),
-        Equation::Exp{ lhs, rhs } => Some(pow(eval(x, &lhs)?, eval(x, &rhs)?)),
-        Equation::Func{ name, args } => {
-            let mut arg_vec = Vec::new();
-            let func = lookup_fn(&name)?;
-            for e in args {
-                arg_vec.push(eval(x, &e)?);
-            }
-            Some(func(&arg_vec))
-        },
-        Equation::Const { value } => Some(*value),
+fn lookup_fn(name: &String) -> Option<Box<dyn Fn(&Vec<f64>) -> f64>> {
+    return match name.as_str() {
+        "pi" => Some(Box::new(|_| 3.141592653589793238462643383279)),
+        "sin" => Some(Box::new(|xs| if xs.len() >= 1 { f64::sin(xs[0]) } else { f64::NAN })),
+        "cos" => Some(Box::new(|xs| if xs.len() >= 1 { f64::cos(xs[0]) } else { f64::NAN })),
+        "tan" => Some(Box::new(|xs| if xs.len() >= 1 { f64::tan(xs[0]) } else { f64::NAN })),
+        "sqrt" => Some(Box::new(|xs| if xs.len() >= 1 { f64::sqrt(xs[0]) } else { f64::NAN })),
+        "ln" => Some(Box::new(|xs| if xs.len() >= 1 { f64::ln(xs[0]) } else { f64::NAN })),
+        "log" => Some(Box::new(|xs| if xs.len() >= 2 { f64::log(xs[0], xs[1]) } else { f64::NAN })),
+        "log10" => Some(Box::new(|xs| if xs.len() >= 1 { f64::log10(xs[0]) } else { f64::NAN })),
+        "log2" => Some(Box::new(|xs| if xs.len() >= 1 { f64::log2(xs[0]) } else { f64::NAN })),
+        _ => None
     }
 }
 
-fn lex_eq(chars_in: &str) -> Option<Vec<Token>> { 
+fn eval(x: f64, eq: &Equation) -> Result<f64, String> {
+    match eq {
+        Equation::Dep => Ok(x),
+        Equation::Add{ lhs, rhs } => Ok(eval(x, &lhs)? + eval(x, &rhs)?),
+        Equation::Sub{ lhs, rhs } => Ok(eval(x, &lhs)? - eval(x, &rhs)?),
+        Equation::Mul{ lhs, rhs } => Ok(eval(x, &lhs)? * eval(x, &rhs)?),
+        Equation::Div{ lhs, rhs } => Ok(eval(x, &lhs)? / eval(x, &rhs)?),
+        Equation::Exp{ lhs, rhs } => Ok(pow(eval(x, &lhs)?, eval(x, &rhs)?)),
+        Equation::Func{ name, args } => {
+            let mut arg_vec = Vec::new();
+            if let Some(func) = lookup_fn(&name) {
+                for e in args {
+                    arg_vec.push(eval(x, &e)?);
+                }
+                Ok(func(&arg_vec))
+            } else {
+                Err(format!("Reference to unknown function {}", name))
+            }
+        },
+        Equation::Const { value } => Ok(*value),
+    }
+}
+
+fn grab_chars<'a, F: Fn(char) -> bool>(s: &'a str, pred: &F) -> Option<(&'a str, &'a str)> {
+    let mut it = s.chars();
+    let mut i = 0;
+    while let Some(c) = it.next() {
+        if !pred(c) {
+            break;
+        }
+        i += 1;
+    }
+    return if i == 0 {
+        None
+    } else {
+        Some((&s[0..i], &s[i..]))
+    }
+}
+
+fn lex_eq(chars_in: &str) -> Result<Vec<Token>, String> { 
 
     let mut res = Vec::new();
     let mut chars = chars_in;
@@ -103,39 +162,39 @@ fn lex_eq(chars_in: &str) -> Option<Vec<Token>> {
         } else if let Some(rem) = chars.strip_prefix(",") {
             res.push(Token::Comma);
             chars = rem;
-        } else if let Some((fname, rem)) = chars.split_once(char::is_alphabetic) {
+        } else if let Some((fname, rem)) = grab_chars(chars, &char::is_alphabetic) {
             res.push(Token::FName(String::from(fname)));
             chars = rem;
-        } else if let Some((cvalue, rem)) = chars.split_once(
-            |c| char::is_digit(c, 10) || c == '.' || c == '+' || c == '-' || c == 'e') {
+        } else if let Some((cvalue, rem)) = grab_chars(chars,
+            &|c| char::is_digit(c, 10) || c == '.' || c == '+' || c == '-' || c == 'e') {
             if let Ok(value) = cvalue.parse::<f64>() {
                 res.push(Token::Literal(value));
                 chars = rem;
             } else {
-                return None;
+                return Err(String::from("Invalid number literal"));
             }
         } else {
-            return None;
+            return Err(String::from("Token not recognized"));
         }
     }
-    Some(res)
+    Ok(res)
 }
 
-fn parse_eq_prim(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+fn parse_eq_prim(tokens: &[Token]) -> Result<(&[Token], Equation), String> {
     if tokens.is_empty() {
-        None
+        Err(String::from("Unexpected end of input"))
     } else {
         match tokens[0].clone() {
             Token::X =>
-                Some((&tokens[1..], Equation::Dep)),
+                Ok((&tokens[1..], Equation::Dep)),
             Token::Literal(value) =>
-                Some((&tokens[1..], Equation::Const{ value: value })),
+                Ok((&tokens[1..], Equation::Const{ value: value })),
             Token::OParen => {
                 let (rest, eq) = parse_eq(&tokens[1..])?;
                 if !rest.is_empty() && let Token::CParen = rest[0] {
-                    Some((&rest[1..], eq))
+                    Ok((&rest[1..], eq))
                 } else {
-                    None
+                    Err(String::from("Parenthesis not closed"))
                 }
             },
             Token::FName(fname) => {
@@ -152,95 +211,88 @@ fn parse_eq_prim(tokens: &[Token]) -> Option<(&[Token], Equation)> {
 
                         let (next_rest, parsed_arg) = parse_eq(rest)?;
                         if next_rest.is_empty() {
-                            return None;
+                            return Err(String::from("End of input before the function argument list was closed"));
                         }
 
                         if let Token::Comma = next_rest[0] {
                             args.push(Rc::new(parsed_arg));
                             rest = &next_rest[1..];
                         } else if let Token::CParen = next_rest[0] {
+                            args.push(Rc::new(parsed_arg));
                             rest = &next_rest[1..];
                             break;
                         } else {
-                            return None;
+                            return Err(String::from("Expected a comma ',' or a closing parenthesis ')'"));
                         }
                     }
-                    Some((rest, Equation::Func{ name: fname, args: args }))
+                    Ok((rest, Equation::Func{ name: fname, args: args }))
                 } else {
-                    None
+                    Err(String::from("Invalid function application, expected: <fname> '(' [ <eq> [ ',' <eq> ]... ] ')'"))
                 }
             }
-            _ => None
+            _ => Err(String::from("Syntax error"))
         }
     }
 }
 
-fn parse_eq_2(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+fn parse_eq_2(tokens: &[Token]) -> Result<(&[Token], Equation), String> {
     let (rest, lhs) = parse_eq_prim(tokens)?;
     if rest.is_empty() {
-        Some((rest, lhs))
+        Ok((rest, lhs))
     } else {
         match rest[0] {
             Token::Hat => {
                 let (rest, rhs) = parse_eq_2(&tokens[1..])?;
-                Some((rest, Equation::Exp{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+                Ok((rest, Equation::Exp{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
             },
-            _ => Some((rest, lhs))
+            _ => Ok((rest, lhs))
         }
     }
 }
 
-fn parse_eq_1(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+fn parse_eq_1(tokens: &[Token]) -> Result<(&[Token], Equation), String> {
     let (rest, lhs) = parse_eq_2(tokens)?;
     if rest.is_empty() {
-        Some((rest, lhs))
+        Ok((rest, lhs))
     } else {
         match rest[0] {
             Token::Star => {
                 let (rest, rhs) = parse_eq_1(&rest[1..])?;
-                Some((rest, Equation::Mul{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+                Ok((rest, Equation::Mul{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
             },
             Token::Slash => {
                 let (rest, rhs) = parse_eq_1(&rest[1..])?;
-                Some((rest, Equation::Div{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+                Ok((rest, Equation::Div{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
             },
-            _ => Some((rest, lhs))
+            _ => Ok((rest, lhs))
         }
     }
 }
 
-fn parse_eq(tokens: &[Token]) -> Option<(&[Token], Equation)> {
+fn parse_eq(tokens: &[Token]) -> Result<(&[Token], Equation), String> {
     let (rest, lhs) = parse_eq_1(tokens)?;
     if rest.is_empty() {
-        Some((rest, lhs))
+        Ok((rest, lhs))
     } else {
         match rest[0] {
             Token::Plus => {
                 let (rest, rhs) = parse_eq(&rest[1..])?;
-                Some((rest, Equation::Add{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+                Ok((rest, Equation::Add{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
             }
             Token::Minus => {
                 let (rest, rhs) = parse_eq(&rest[1..])?;
-                Some((rest, Equation::Sub{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
+                Ok((rest, Equation::Sub{ lhs: Rc::new(lhs), rhs: Rc::new(rhs) }))
             }
             _ =>
-                Some((rest, lhs))
+                Ok((rest, lhs))
         }
     }
 }
 
-fn read_eq(src: &str) -> Option<Equation> {
-    if let Some(tokens) = lex_eq(src) {
-        if let Some((_, eq)) = parse_eq(&tokens) {
-            Some(eq)
-        } else {
-            println!("Parser error in equation.");
-            None
-        }
-    } else {
-        println!("Lexer error in equation.");
-        None
-    }
+fn read_eq(src: &str) -> Result<Equation, String> {
+    let tokens = lex_eq(src)?;
+    let (_, eq) = parse_eq(&tokens)?;
+    Ok(eq)
 }
 
 fn draw_grid(cairo: &gtk::cairo::Context, w: f64, h: f64, dx: f64, dy: f64) {
@@ -353,7 +405,7 @@ fn draw_scalars(cairo: &gtk::cairo::Context, dx: f64, dy: f64, w: f64, h: f64, s
     }
 }
 
-fn draw_equation(cairo: &gtk::cairo::Context, w: f64, h: f64, equation: Box<dyn Fn(f64) -> f64>) {
+fn draw_equation<F: Fn(f64) -> f64>(cairo: &gtk::cairo::Context, w: f64, h: f64, equation: &F) {
     cairo.set_source_rgb(1.0, 0.0, 0.0);
     cairo.set_line_width(5.0);
 
@@ -388,9 +440,14 @@ fn equation_box<T: IsA<gtk::Widget>>(eq_list: Rc<RefCell<Vec<Equation>>>, hook: 
     view.connect_changed(move |view|
         {
             println!("Text changed!");
-            if let Some(eq) = read_eq(&view.text()) {
-                eq_list.borrow_mut()[index] = eq;
-                local_hook.queue_draw();
+            match read_eq(&view.text()) {
+                Ok(eq) => {
+                    println!("Parsed eq: {}", eq);
+                    eq_list.borrow_mut()[index] = eq;
+                    local_hook.queue_draw();
+                },
+                Err(msg) =>
+                    println!("{}", msg)
             }
         });    
     view
@@ -427,8 +484,6 @@ fn layout(window: &gtk::ApplicationWindow) {
     let eq_list = equations.clone();
     plot_canvas.set_draw_func(move |_, cairo, width, height|{
 
-        println!("Draw.");
-
         let w  = width as f64;
         let h  = height as f64;
 
@@ -441,14 +496,20 @@ fn layout(window: &gtk::ApplicationWindow) {
         let iter = eq_ref.iter();
         for eq in iter {
             let eq_cp = eq.clone();
+            if let Err(msg) = eval(0.0, &eq_cp) {
+                println!("Eval error: {}", msg);
+                break;
+            }
             draw_equation(&cairo, w, h,
-                Box::new(move |x|
-                    if let Some(y) = eval(x, &eq_cp) {
-                        y
-                    } else {
-                        println!("Eval error.");
-                        0.0
-                    }));
+                &move |x| {
+                    match eval(x, &eq_cp) {
+                        Ok(y) => y,
+                        Err(msg) => {
+                            println!("Eval error: {}", msg);
+                            0.0
+                        }
+                    }
+                });
         }
     });
 
